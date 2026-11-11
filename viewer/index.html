@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Parametric Body Generator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0e1013; --panel:#16191e; --panel-2:#1d2127; --line:#282d35;
+    --ink:#e8eaed; --ink-dim:#9aa3af; --ink-faint:#6b7280;
+    --accent:#6ea8fe; --good:#5bc98c; --warn:#e0a458;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--bg); color:var(--ink);
+    font:14px/1.5 Inter,system-ui,sans-serif;
+    display:flex; overflow:hidden;
+  }
+  /* ---------- panel ---------- */
+  #panel{
+    width:330px; flex:0 0 330px; height:100%; overflow-y:auto;
+    background:var(--panel); border-right:1px solid var(--line);
+    padding:18px 16px 40px;
+  }
+  #panel::-webkit-scrollbar{width:8px}
+  #panel::-webkit-scrollbar-thumb{background:#2e343d;border-radius:4px}
+  h1{font-size:15px;font-weight:600;letter-spacing:-.01em}
+  .sub{font-size:11.5px;color:var(--ink-faint);margin-top:3px;line-height:1.45}
+  .group{margin-top:20px}
+  .group>h2{
+    font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;
+    color:var(--ink-faint);margin-bottom:10px;
+    padding-bottom:6px;border-bottom:1px solid var(--line);
+  }
+  .row{margin-bottom:12px}
+  .row label{display:flex;justify-content:space-between;align-items:baseline;
+    font-size:12.5px;color:var(--ink-dim);margin-bottom:5px}
+  .row .val{font:500 12px/1 'JetBrains Mono',monospace;color:var(--ink)}
+  input[type=range]{
+    -webkit-appearance:none;appearance:none;width:100%;height:3px;
+    background:#2f353e;border-radius:2px;outline:none;
+  }
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none;width:14px;height:14px;border-radius:50%;
+    background:var(--accent);cursor:pointer;border:2px solid var(--panel);
+    box-shadow:0 0 0 1px var(--accent);
+  }
+  input[type=range]::-moz-range-thumb{
+    width:14px;height:14px;border-radius:50%;background:var(--accent);
+    cursor:pointer;border:2px solid var(--panel);box-shadow:0 0 0 1px var(--accent);
+  }
+  .auto{font-size:10.5px;color:var(--ink-faint);font-style:italic}
+  /* ---------- readout ---------- */
+  table{width:100%;border-collapse:collapse;font:12px/1.4 'JetBrains Mono',monospace}
+  th{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-faint);
+     text-align:right;font-weight:500;padding:0 0 6px}
+  th:first-child{text-align:left}
+  td{padding:3px 0;text-align:right;color:var(--ink-dim)}
+  td:first-child{text-align:left;color:var(--ink)}
+  td.ok{color:var(--good)}
+  /* ---------- buttons ---------- */
+  .btns{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+  button{
+    flex:1;min-width:92px;padding:8px 10px;border-radius:6px;cursor:pointer;
+    background:var(--panel-2);color:var(--ink);border:1px solid var(--line);
+    font:500 12px Inter,sans-serif;transition:.12s;
+  }
+  button:hover{background:#242932;border-color:#39404a}
+  button.primary{background:var(--accent);color:#0b1220;border-color:var(--accent)}
+  button.primary:hover{background:#86b8ff}
+  select{
+    width:100%;padding:7px 9px;border-radius:6px;background:var(--panel-2);
+    color:var(--ink);border:1px solid var(--line);font:12.5px Inter,sans-serif;
+  }
+  /* ---------- stage ---------- */
+  #stage{flex:1;position:relative;min-width:0}
+  canvas{display:block}
+  #hud{
+    position:absolute;left:16px;bottom:14px;font:11.5px 'JetBrains Mono',monospace;
+    color:var(--ink-faint);pointer-events:none;line-height:1.6;
+  }
+  #note{
+    position:absolute;right:16px;top:14px;max-width:270px;text-align:right;
+    font-size:10.5px;color:var(--ink-faint);line-height:1.5;pointer-events:none;
+  }
+  #toast{
+    position:absolute;left:50%;top:18px;transform:translateX(-50%) translateY(-24px);
+    background:var(--panel-2);border:1px solid var(--line);color:var(--ink);
+    padding:7px 14px;border-radius:6px;font-size:12px;opacity:0;
+    transition:.22s;pointer-events:none;
+  }
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  @media(max-width:820px){
+    body{flex-direction:column-reverse}
+    #panel{width:100%;flex:1 1 auto;height:auto;border-right:0;border-top:1px solid var(--line)}
+    #stage{flex:0 0 52vh}
+  }
+</style>
+</head>
+<body>
+
+<div id="panel">
+  <h1>Parametric Body Generator</h1>
+  <div class="sub">Synthetic base mesh driven entirely by numeric measurements.
+    Generic, featureless form — not derived from any photograph or real person.</div>
+
+  <div class="group">
+    <h2>Measurements (cm)</h2>
+    <div class="row"><label>Stature<span class="val" id="v_stature"></span></label>
+      <input type="range" id="stature" min="140" max="205" step="0.5" value="178"></div>
+    <div class="row"><label>Chest<span class="val" id="v_chest"></span></label>
+      <input type="range" id="chest" min="65" max="150" step="0.5" value="104"></div>
+    <div class="row"><label>Waist<span class="val" id="v_waist"></span></label>
+      <input type="range" id="waist" min="52" max="150" step="0.5" value="92"></div>
+    <div class="row"><label>Hip<span class="val" id="v_hip"></span></label>
+      <input type="range" id="hip" min="65" max="155" step="0.5" value="101"></div>
+    <div class="row"><label>Shoulder width<span class="val" id="v_shoulder"></span></label>
+      <input type="range" id="shoulder" min="30" max="58" step="0.25" value="47"></div>
+    <div class="row"><label>Neck<span class="val" id="v_neck"></span></label>
+      <input type="range" id="neck" min="26" max="52" step="0.25" value="38"></div>
+    <div class="row"><label>Inseam<span class="val" id="v_inseam"></span></label>
+      <input type="range" id="inseam" min="60" max="105" step="0.5" value="86"></div>
+  </div>
+
+  <div class="group">
+    <h2>Shape</h2>
+    <div class="row"><label>Proportion template<span class="val" id="v_prop"></span></label>
+      <input type="range" id="prop" min="0" max="1" step="0.01" value="0"></div>
+    <div class="row"><label>Muscle<span class="val" id="v_muscle"></span></label>
+      <input type="range" id="muscle" min="0" max="1" step="0.01" value="0.5"></div>
+    <div class="row"><label>Soft tissue<span class="val" id="v_fat"></span></label>
+      <input type="range" id="fat" min="0" max="1" step="0.01" value="0.5"></div>
+    <div class="row"><label>Posture<span class="val" id="v_posture"></span></label>
+      <input type="range" id="posture" min="-1" max="1" step="0.02" value="0"></div>
+  </div>
+
+  <div class="group">
+    <h2>Pose</h2>
+    <div class="row"><label>Arm abduction<span class="val" id="v_abd"></span></label>
+      <input type="range" id="abd" min="0" max="90" step="1" value="45"></div>
+    <div class="row"><label>Leg stance<span class="val" id="v_stance"></span></label>
+      <input type="range" id="stance" min="0" max="8" step="0.1" value="1.5"></div>
+    <div class="row"><label>Mesh resolution<span class="val" id="v_res"></span></label>
+      <input type="range" id="res" min="20" max="110" step="2" value="56"></div>
+  </div>
+
+  <div class="group">
+    <h2>Verification</h2>
+    <table>
+      <thead><tr><th>Girth</th><th>Target</th><th>On mesh</th><th>Err</th></tr></thead>
+      <tbody id="verify"></tbody>
+    </table>
+    <div class="sub" style="margin-top:8px">Measured by integrating the generated
+      cross-section, not read back from the input.</div>
+  </div>
+
+  <div class="group">
+    <h2>Preset</h2>
+    <select id="preset">
+      <option value="">Custom</option>
+      <option value="a">Template A reference — 178</option>
+      <option value="b">Template B reference — 165</option>
+      <option value="tall">Tall, lean — 192</option>
+      <option value="short">Short, broad — 158</option>
+      <option value="heavy">Heavy build — 180</option>
+    </select>
+    <div class="btns">
+      <button id="btn-obj" class="primary">Copy OBJ</button>
+      <button id="btn-json">Copy params</button>
+      <button id="btn-reset">Reset</button>
+    </div>
+    <div class="sub" style="margin-top:8px">The browser build is a live preview.
+      The Python pipeline emits the watertight, calibrated, rigged manifold.</div>
+  </div>
+</div>
+
+<div id="stage">
+  <div id="note">Generic synthetic form. No facial features,<br>no identity, no likeness.</div>
+  <div id="hud"></div>
+  <div id="toast"></div>
+</div>
+
+<script type="importmap">
+{"imports":{
+  "three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+}}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+
+const TAU = Math.PI*2;
+
+/* ====================================================================
+   Anthropometry — Drillis & Contini segment ratios (fractions of stature)
+   ==================================================================== */
+const RATIO = {
+  head_height:.130, acromion_h:.818, chest_h:.720, elbow_h:.630, waist_h:.620,
+  wrist_h:.485, hip_h:.530, crotch_h:.485, knee_h:.285, ankle_h:.039,
+  biacromial_w:.259, bihip_w:.191, foot_length:.152, foot_breadth:.055,
+  hand_length:.108, hand_breadth:.044
+};
+const TA = {shoulder_scale:1.0, hip_width_scale:1.0, waist_level:.600,
+  chest_depth:.72, waist_depth:.74, hip_depth:.78, limb:1.0, front:0};
+const TB = {shoulder_scale:.915, hip_width_scale:1.065, waist_level:.625,
+  chest_depth:.78, waist_depth:.76, hip_depth:.74, limb:.930, front:.055};
+const mix=(a,b,t)=>a*(1-t)+b*t;
+function tpl(t){const o={};for(const k in TA)o[k]=mix(TA[k],TB[k],t);return o;}
+
+function ellipsePerimeter(p,q){
+  const h=((p-q)**2)/((p+q)**2||1);
+  return Math.PI*(p+q)*(1+3*h/(10+Math.sqrt(4-3*h)));
+}
+function semiAxes(circ,depthRatio){
+  const s=circ/ellipsePerimeter(1,depthRatio);
+  return [s, s*depthRatio];
+}
+
+function resolve(P){
+  const H=P.stature, T=tpl(P.proportion), d={};
+  const lgb = 1 + .26*(P.muscle-.5) + .16*(P.fat-.5);
+
+  d.chest=P.chest; d.waist=P.waist; d.hip=P.hip; d.neck=P.neck;
+  d.head_height=H*RATIO.head_height;
+  d.acromion_h=H*RATIO.acromion_h;
+  d.chest_h=H*RATIO.chest_h;
+  d.waist_h=H*T.waist_level;
+  d.hip_h=H*RATIO.hip_h;
+  d.crotch_h=P.inseam;
+  d.knee_h=H*RATIO.knee_h;
+  d.ankle_h=H*RATIO.ankle_h;
+  d.chin_h=H-d.head_height;
+  d.neck_base_h=d.acromion_h+.022*H;
+
+  d.shoulder_width=P.shoulder;
+  d.hip_width=H*RATIO.bihip_w*T.hip_width_scale;
+  d.foot_length=H*RATIO.foot_length;
+  d.foot_breadth=H*RATIO.foot_breadth;
+  d.hand_length=H*RATIO.hand_length;
+  d.hand_breadth=H*RATIO.hand_breadth;
+
+  d.upperarm_len=H*(RATIO.acromion_h-RATIO.elbow_h);
+  d.forearm_len=H*(RATIO.elbow_h-RATIO.wrist_h);
+
+  const lg=T.limb*lgb;
+  d.thigh=d.hip*.585*lg;  d.knee=d.thigh*.68;
+  d.calf=d.thigh*.665*lg; d.ankle_g=d.calf*.615;
+  d.uparm=d.chest*.315*lg; d.elbow_g=d.uparm*.88;
+  d.forearm=d.uparm*.885*lg; d.wrist_g=d.forearm*.615;
+
+  d.chest_depth=T.chest_depth; d.waist_depth=T.waist_depth; d.hip_depth=T.hip_depth;
+  d.front=T.front*(1+.5*(P.fat-.5));
+  d.glute=.22+.10*P.proportion+.08*(P.fat-.5);
+  d.head_width=d.head_height*.72; d.head_depth=d.head_height*.84;
+  return d;
+}
+
+/* ====================================================================
+   Torso profile — each cross-section renormalised to the exact perimeter
+   ==================================================================== */
+function sectionRadii(s, NT){
+  const [pw,pd]=semiAxes(s.circ, s.depth);
+  const r=new Float64Array(NT);
+  for(let i=0;i<NT;i++){
+    const th=i/NT*TAU, ct=Math.cos(th), st=Math.sin(th);
+    let v=(pw*pd)/Math.sqrt((pd*ct)**2+(pw*st)**2);
+    if(s.front) v*= 1 + s.front*Math.exp(-((st-1)**2)/.28)*(st>-.1?1:0);
+    if(s.back)  v*= 1 - s.back *Math.exp(-((st+1)**2)/.45)*(st< .1?1:0);
+    if(s.glute) v*= 1 + s.glute*Math.exp(-((st+1)**2)/.30)*(st< .1?1:0);
+    if(s.square)v*= 1 + s.square*Math.abs(ct)**3;
+    r[i]=v;
+  }
+  // renormalise so the closed curve perimeter equals the requested girth
+  const per=perimeterOf(r), k=s.circ/per;
+  for(let i=0;i<NT;i++) r[i]*=k;
+  return r;
+}
+function perimeterOf(r){
+  const n=r.length, dth=TAU/n; let sum=0;
+  for(let i=0;i<n;i++){
+    const dr=(r[(i+1)%n]-r[(i-1+n)%n])/(2*dth);
+    sum+=Math.sqrt(r[i]*r[i]+dr*dr)*dth;
+  }
+  return sum;
+}
+function catmull(p0,p1,p2,p3,t){
+  const t2=t*t,t3=t2*t;
+  return .5*((2*p1)+(-p0+p2)*t+(2*p0-5*p1+4*p2-p3)*t2+(-p0+3*p1-3*p2+p3)*t3);
+}
+
+function buildSections(d,P){
+  const H=P.stature, post=P.posture;
+  const cShoulder=d.chest*1.045+d.shoulder_width*.30;
+  const cNeck=d.neck*1.30;
+  return [
+    {y:d.crotch_h-.012*H, circ:d.hip*.880, depth:d.hip_depth*1.02, z:0,     glute:d.glute*.55},
+    {y:d.hip_h,           circ:d.hip,      depth:d.hip_depth,      z:-.004*H, glute:d.glute},
+    {y:(d.hip_h+d.waist_h)/2, circ:(d.hip+d.waist)*.505,
+       depth:(d.hip_depth+d.waist_depth)/2, z:-.006*H+.004*H*post, back:.06, glute:d.glute*.30},
+    {y:d.waist_h, circ:d.waist, depth:d.waist_depth, z:-.008*H+.006*H*post, back:.08},
+    {y:(d.waist_h+d.chest_h)/2, circ:(d.waist+d.chest)*.515,
+       depth:(d.waist_depth+d.chest_depth)/2, z:-.004*H+.002*H*post, back:.10, front:d.front*.45},
+    {y:d.chest_h, circ:d.chest, depth:d.chest_depth, z:0, back:.11, front:d.front},
+    {y:d.chest_h+.045*H, circ:d.chest*.985, depth:d.chest_depth*.96,
+       z:.002*H-.004*H*post, back:.09, front:d.front*.30, square:.05},
+    {y:d.acromion_h, circ:cShoulder, depth:.56, z:0, back:.05, square:.16},
+    {y:d.neck_base_h, circ:cNeck, depth:.80, z:-.004*H, square:.02},
+  ];
+}
+
+/* ====================================================================
+   Geometry construction
+   ==================================================================== */
+function torsoGeometry(d,P,NY,NT){
+  const S=buildSections(d,P);
+  const rings=S.map(s=>sectionRadii(s,NT));
+  const ys=S.map(s=>s.y), zs=S.map(s=>s.z);
+
+  const pos=[], idx=[];
+  const y0=ys[0], y1=ys[ys.length-1];
+  const sampled=[];
+  for(let j=0;j<NY;j++){
+    const y=y0+(y1-y0)*j/(NY-1);
+    // locate span
+    let k=0; while(k<ys.length-2 && y>ys[k+1]) k++;
+    const t=(y-ys[k])/(ys[k+1]-ys[k]);
+    const i0=Math.max(0,k-1), i1=k, i2=k+1, i3=Math.min(ys.length-1,k+2);
+    const zc=catmull(zs[i0],zs[i1],zs[i2],zs[i3],t);
+    const row=new Float64Array(NT);
+    for(let i=0;i<NT;i++)
+      row[i]=Math.max(.4,catmull(rings[i0][i],rings[i1][i],rings[i2][i],rings[i3][i],t));
+    sampled.push({y,zc,row});
+    for(let i=0;i<NT;i++){
+      const th=i/NT*TAU;
+      pos.push(row[i]*Math.cos(th), y, zc+row[i]*Math.sin(th));
+    }
+  }
+  for(let j=0;j<NY-1;j++) for(let i=0;i<NT;i++){
+    const a=j*NT+i, b=j*NT+(i+1)%NT, c=(j+1)*NT+i, e=(j+1)*NT+(i+1)%NT;
+    idx.push(a,c,b, b,c,e);
+  }
+  // caps
+  const capBot=pos.length/3; pos.push(0,ys[0],zs[0]);
+  for(let i=0;i<NT;i++) idx.push(capBot, (i+1)%NT, i);
+  const capTop=pos.length/3; pos.push(0,y1,zs[zs.length-1]);
+  const base=(NY-1)*NT;
+  for(let i=0;i<NT;i++) idx.push(capTop, base+i, base+(i+1)%NT);
+
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
+  g.setIndex(idx); g.computeVertexNormals();
+  g.userData.sampled=sampled;
+  return g;
+}
+
+function segment(a,b,rA,rB,seg){
+  const dir=new THREE.Vector3().subVectors(b,a);
+  const len=dir.length();
+  const g=new THREE.CylinderGeometry(rB,rA,len,seg,1,true);
+  const q=new THREE.Quaternion().setFromUnitVectors(
+    new THREE.Vector3(0,1,0), dir.clone().normalize());
+  const m=new THREE.Matrix4().compose(
+    new THREE.Vector3().addVectors(a,b).multiplyScalar(.5), q, new THREE.Vector3(1,1,1));
+  g.applyMatrix4(m);
+  return g;
+}
+function ball(c,rx,ry,rz,seg){
+  const g=new THREE.SphereGeometry(1,seg,Math.max(8,seg>>1));
+  g.scale(rx,ry,rz); g.translate(c.x,c.y,c.z);
+  return g;
+}
+const V=(x,y,z)=>new THREE.Vector3(x,y,z);
+
+function joints(d,P){
+  const H=P.stature, J={};
+  const hip_x=.047*H;
+  const drop=d.hip_h-d.ankle_h;
+  const clearance=d.foot_breadth*.62+.022*H;
+  const ankle_x=Math.max(clearance, hip_x+Math.tan(P.stance*Math.PI/180)*drop);
+  const abd=P.abduction*Math.PI/180;
+  for(const [s,sg] of [['l',1],['r',-1]]){
+    const sh=V(sg*d.shoulder_width*.455, d.acromion_h, 0);
+    const dir=V(sg*Math.sin(abd), -Math.cos(abd), 0);
+    J['shoulder_'+s]=sh;
+    J['elbow_'+s]=sh.clone().addScaledVector(dir,d.upperarm_len);
+    J['wrist_'+s]=J['elbow_'+s].clone().addScaledVector(dir,d.forearm_len);
+    J['hand_'+s]=J['wrist_'+s].clone().addScaledVector(dir,d.hand_length);
+    J['hip_'+s]=V(sg*hip_x,d.hip_h,0);
+    J['knee_'+s]=V(sg*(ankle_x+(hip_x-ankle_x)*.38), d.knee_h, .004*H);
+    J['ankle_'+s]=V(sg*ankle_x, d.ankle_h, 0);
+  }
+  return J;
+}
+
+function buildBody(P,NT){
+  const d=resolve(P), H=P.stature, J=joints(d,P);
+  const NY=Math.max(26,Math.round(NT*1.15));
+  const seg=Math.max(10,NT>>1);
+  const parts=[];
+  const torso=torsoGeometry(d,P,NY,NT);
+  parts.push(torso);
+
+  // neck + generic ovoid head (deliberately featureless)
+  const nr=d.neck/TAU;
+  parts.push(segment(V(0,d.neck_base_h-.02*H,-.004*H), V(0,d.chin_h+.012*H,.006*H),
+             nr*1.14, nr*.95, seg));
+  parts.push(ball(V(0,d.chin_h+d.head_height*.52,.004*H),
+             d.head_width*.5, d.head_height*.52, d.head_depth*.5, seg));
+  parts.push(ball(V(0,d.chin_h+d.head_height*.22,d.head_depth*.08),
+             d.head_width*.40, d.head_height*.26, d.head_depth*.40, seg));
+
+  for(const s of ['l','r']){
+    const sh=J['shoulder_'+s], el=J['elbow_'+s], wr=J['wrist_'+s], hn=J['hand_'+s];
+    const rSh=d.uparm/TAU*1.12, rEl=d.elbow_g/TAU, rFa=d.forearm/TAU*1.08, rWr=d.wrist_g/TAU;
+    parts.push(ball(sh,rSh*1.08,rSh*1.08,rSh*1.08,seg));
+    parts.push(segment(sh,el,rSh,rEl,seg));
+    parts.push(ball(el,rEl,rEl,rEl,seg));
+    parts.push(segment(el,wr,rFa,rWr,seg));
+    parts.push(ball(wr,rWr,rWr,rWr,seg));
+    // mitt hand with thumb
+    const ax=hn.clone().sub(wr).normalize();
+    const palm=wr.clone().addScaledVector(ax,d.hand_length*.42);
+    const hg=new THREE.SphereGeometry(1,seg,seg>>1);
+    hg.scale(d.hand_breadth*.52, d.hand_length*.46, d.hand_breadth*.30);
+    const hq=new THREE.Quaternion().setFromUnitVectors(V(0,1,0),ax);
+    hg.applyMatrix4(new THREE.Matrix4().compose(palm,hq,V(1,1,1)));
+    parts.push(hg);
+    const lat=new THREE.Vector3().crossVectors(ax,V(0,0,1)).normalize();
+    const tb=wr.clone().addScaledVector(ax,d.hand_length*.20)
+                       .addScaledVector(lat,d.hand_breadth*.42*(s==='l'?1:-1));
+    parts.push(segment(tb, tb.clone().addScaledVector(ax,d.hand_length*.26)
+                 .addScaledVector(lat,d.hand_breadth*.30*(s==='l'?1:-1)),
+                 d.hand_breadth*.16, d.hand_breadth*.12, Math.max(8,seg>>1)));
+
+    const hp=J['hip_'+s], kn=J['knee_'+s], an=J['ankle_'+s];
+    const rTh=d.thigh/TAU, rKn=d.knee/TAU, rCf=d.calf/TAU, rAn=d.ankle_g/TAU;
+    const topY=Math.min(d.crotch_h+.012*H, d.hip_h-.010*H);
+    parts.push(segment(V(hp.x,topY,hp.z),kn,rTh*1.04,rKn,seg));
+    const cf=kn.clone().lerp(an,.30);
+    parts.push(segment(kn,cf,rKn,rCf,seg));
+    parts.push(ball(kn,rKn,rKn*.95,rKn,seg));
+    parts.push(segment(cf,an,rCf,rAn,seg));
+    const FL=d.foot_length, FB=d.foot_breadth;
+    parts.push(ball(V(an.x, d.ankle_h*.42, an.z+FL*.10), FB*.50, d.ankle_h*.80, FL*.40, seg));
+    parts.push(ball(V(an.x, d.ankle_h*.34, an.z+FL*.38), FB*.46, d.ankle_h*.62, FL*.26, seg));
+  }
+  return {parts, d, J, torso};
+}
+
+/* ====================================================================
+   Scene
+   ==================================================================== */
+const stage=document.getElementById('stage');
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x0e1013);
+const camera=new THREE.PerspectiveCamera(32,1,1,2000);
+camera.position.set(170,120,290);
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+stage.appendChild(renderer.domElement);
+const controls=new OrbitControls(camera,renderer.domElement);
+controls.enableDamping=true; controls.target.set(0,90,0);
+
+scene.add(new THREE.HemisphereLight(0xcfd8e3,0x1a1d22,1.5));
+const key=new THREE.DirectionalLight(0xffffff,1.9); key.position.set(90,160,150); scene.add(key);
+const fill=new THREE.DirectionalLight(0x93a7c4,.7); fill.position.set(-130,60,-90); scene.add(fill);
+const rim=new THREE.DirectionalLight(0xbcd2f0,.8); rim.position.set(-40,100,-180); scene.add(rim);
+
+const grid=new THREE.GridHelper(400,40,0x2a3039,0x1b1f25);
+grid.material.transparent=true; grid.material.opacity=.55; scene.add(grid);
+
+const material=new THREE.MeshStandardMaterial({
+  color:0xb9bfc8, roughness:.72, metalness:.02, flatShading:false});
+let group=new THREE.Group(); scene.add(group);
+let lastBuild=null;
+
+function params(){
+  const g=id=>parseFloat(document.getElementById(id).value);
+  return {stature:g('stature'), chest:g('chest'), waist:g('waist'), hip:g('hip'),
+    shoulder:g('shoulder'), neck:g('neck'), inseam:g('inseam'),
+    proportion:g('prop'), muscle:g('muscle'), fat:g('fat'), posture:g('posture'),
+    abduction:g('abd'), stance:g('stance'), res:g('res')};
+}
+
+function rebuild(){
+  const P=params();
+  const NT=Math.max(16,Math.round(P.res/2)*2);
+  const built=buildBody(P,NT);
+  group.traverse(o=>{if(o.geometry)o.geometry.dispose();});
+  scene.remove(group);
+  group=new THREE.Group();
+  let tris=0;
+  for(const g of built.parts){
+    group.add(new THREE.Mesh(g,material));
+    tris += g.index ? g.index.count/3 : g.attributes.position.count/3;
+  }
+  scene.add(group);
+  controls.target.set(0,P.stature*0.50,0);
+  lastBuild={P, built, tris};
+  updateLabels(P); verify(built,P); hud(P,tris);
+}
+
+function updateLabels(P){
+  const set=(id,txt)=>document.getElementById(id).textContent=txt;
+  set('v_stature',P.stature.toFixed(1)+' cm'); set('v_chest',P.chest.toFixed(1)+' cm');
+  set('v_waist',P.waist.toFixed(1)+' cm');     set('v_hip',P.hip.toFixed(1)+' cm');
+  set('v_shoulder',P.shoulder.toFixed(2)+' cm');set('v_neck',P.neck.toFixed(2)+' cm');
+  set('v_inseam',P.inseam.toFixed(1)+' cm');   set('v_prop',P.proportion.toFixed(2));
+  set('v_muscle',P.muscle.toFixed(2));         set('v_fat',P.fat.toFixed(2));
+  set('v_posture',P.posture.toFixed(2));       set('v_abd',P.abduction.toFixed(0)+'°');
+  set('v_stance',P.stance.toFixed(1)+'°');
+  set('v_res',Math.round(P.res/2)*2+' seg');
+}
+
+function verify(built,P){
+  const d=built.d, S=built.torso.userData.sampled;
+  const at=y=>{
+    let best=S[0],bd=1e9;
+    for(const s of S){const q=Math.abs(s.y-y); if(q<bd){bd=q;best=s;}}
+    return perimeterOf(best.row);
+  };
+  const rows=[['Chest',d.chest,at(d.chest_h)],['Waist',d.waist,at(d.waist_h)],
+              ['Hip',d.hip,at(d.hip_h)]];
+  document.getElementById('verify').innerHTML=rows.map(([n,t,m])=>{
+    const e=(m-t)/t*100;
+    const cls=Math.abs(e)<0.6?'ok':'';
+    return `<tr><td>${n}</td><td>${t.toFixed(1)}</td><td>${m.toFixed(1)}</td>`+
+           `<td class="${cls}">${e>=0?'+':''}${e.toFixed(2)}%</td></tr>`;
+  }).join('');
+}
+
+function hud(P,tris){
+  const bmiIsh=(P.chest+P.hip)/2/P.stature;
+  document.getElementById('hud').innerHTML=
+    `${Math.round(tris).toLocaleString()} triangles &nbsp;|&nbsp; `+
+    `${P.stature.toFixed(0)} cm &nbsp;|&nbsp; ratio ${bmiIsh.toFixed(3)}<br>`+
+    `drag to orbit &nbsp;·&nbsp; scroll to zoom`;
+}
+
+/* ---------- export ---------- */
+function toOBJ(){
+  if(!lastBuild) return '';
+  const L=['# parametric synthetic human — measurement driven',
+           '# generic form; not derived from any photograph or real individual',
+           `# stature=${lastBuild.P.stature} chest=${lastBuild.P.chest} `+
+           `waist=${lastBuild.P.waist} hip=${lastBuild.P.hip}`,
+           'o synthetic_body'];
+  let off=1;
+  for(const g of lastBuild.built.parts){
+    const p=g.attributes.position.array;
+    for(let i=0;i<p.length;i+=3)
+      L.push(`v ${p[i].toFixed(3)} ${p[i+1].toFixed(3)} ${p[i+2].toFixed(3)}`);
+    const n=p.length/3;
+    if(g.index){const ix=g.index.array;
+      for(let i=0;i<ix.length;i+=3)
+        L.push(`f ${ix[i]+off} ${ix[i+1]+off} ${ix[i+2]+off}`);
+    } else {
+      for(let i=0;i<n;i+=3) L.push(`f ${i+off} ${i+1+off} ${i+2+off}`);
+    }
+    off+=n;
+  }
+  return L.join('\n');
+}
+function toast(msg){
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.classList.add('show');
+  clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove('show'),1900);
+}
+async function copy(text,label){
+  try{ await navigator.clipboard.writeText(text); toast(label+' copied to clipboard'); }
+  catch(e){ toast('Clipboard blocked — select the page and copy manually'); }
+}
+document.getElementById('btn-obj').onclick=()=>{
+  const o=toOBJ();
+  copy(o, `OBJ (${(o.length/1024).toFixed(0)} KB)`);
+};
+document.getElementById('btn-json').onclick=()=>
+  copy(JSON.stringify(params(),null,2),'Parameters');
+
+const DEFAULTS={stature:178,chest:104,waist:92,hip:101,shoulder:47,neck:38,
+  inseam:86,prop:0,muscle:.5,fat:.5,posture:0,abd:45,stance:1.5,res:56};
+const PRESETS={
+  a:{stature:178,chest:104,waist:92,hip:101,shoulder:47,neck:38,inseam:86,prop:0,muscle:.55,fat:.5},
+  b:{stature:165,chest:92,waist:74,hip:99,shoulder:39,neck:33,inseam:78,prop:1,muscle:.45,fat:.5},
+  tall:{stature:192,chest:102,waist:84,hip:98,shoulder:50,neck:39,inseam:95,prop:0,muscle:.45,fat:.25},
+  short:{stature:158,chest:100,waist:88,hip:97,shoulder:44,neck:38,inseam:73,prop:0,muscle:.72,fat:.45},
+  heavy:{stature:180,chest:124,waist:118,hip:122,shoulder:48,neck:44,inseam:85,prop:0,muscle:.6,fat:.9}
+};
+function apply(obj){
+  for(const k in obj){const el=document.getElementById(k); if(el) el.value=obj[k];}
+  rebuild();
+}
+document.getElementById('preset').onchange=e=>{
+  const p=PRESETS[e.target.value]; if(p) apply({...DEFAULTS,...p});
+};
+document.getElementById('btn-reset').onclick=()=>{
+  document.getElementById('preset').value=''; apply(DEFAULTS);
+};
+
+let pending=null;
+document.querySelectorAll('input[type=range]').forEach(el=>{
+  el.addEventListener('input',()=>{
+    document.getElementById('preset').value='';
+    if(pending) cancelAnimationFrame(pending);
+    pending=requestAnimationFrame(rebuild);
+  });
+});
+
+function resize(){
+  const w=stage.clientWidth,h=stage.clientHeight;
+  camera.aspect=w/h; camera.updateProjectionMatrix(); renderer.setSize(w,h);
+}
+addEventListener('resize',resize);
+resize(); rebuild();
+(function loop(){requestAnimationFrame(loop); controls.update(); renderer.render(scene,camera);})();
+</script>
+</body>
+</html>

@@ -1,0 +1,121 @@
+{
+  "parameters": {
+    "stature": 178.0,
+    "proportion": 0.0,
+    "muscle": 0.75,
+    "bodyfat": 0.32,
+    "definition": 0.9,
+    "posture": 0.0,
+    "chest": 104.0,
+    "waist": 92.0,
+    "hip": 101.0,
+    "neck": null,
+    "shoulder_width": 47.0,
+    "inseam": null,
+    "arm_length": null,
+    "thigh_girth": null,
+    "calf_girth": null,
+    "upperarm_girth": null,
+    "forearm_girth": null,
+    "head_height": null,
+    "arm_abduction": 45.0,
+    "leg_stance": 1.5,
+    "derived": {
+      "chest": 104.0,
+      "waist": 92.0,
+      "hip": 101.0,
+      "neck": 38.62754504,
+      "head_height": 23.14,
+      "acromion_h": 145.60399999999998,
+      "chest_h": 128.16,
+      "waist_h": 106.8,
+      "hip_h": 94.34,
+      "crotch_h": 86.33,
+      "knee_h": 50.73,
+      "ankle_h": 6.942,
+      "elbow_h": 112.14,
+      "wrist_h": 86.33,
+      "chin_h": 154.86,
+      "neck_base_h": 149.51999999999998,
+      "shoulder_width": 47.0,
+      "hip_width": 34.0115992,
+      "foot_length": 27.056,
+      "foot_breadth": 9.790000000000001,
+      "hand_length": 19.224,
+      "hand_breadth": 7.832,
+      "upperarm_len": 33.46399999999999,
+      "forearm_len": 25.810000000000002,
+      "arm_length": 59.273999999999994,
+      "thigh_len": 42.72,
+      "shank_len": 43.788,
+      "thigh_girth": 61.223876999999995,
+      "knee_girth": 41.63223636,
+      "calf_girth": 42.187720596021,
+      "ankle_girth": 25.945448166552914,
+      "upperarm_girth": 33.945912,
+      "elbow_girth": 29.87240256,
+      "forearm_girth": 31.129657302744,
+      "wrist_girth": 19.14473924118756,
+      "chest_depth_ratio": 0.72,
+      "waist_depth_ratio": 0.74,
+      "hip_depth_ratio": 0.78,
+      "bust_projection": 0.0,
+      "posture": 0.0,
+      "arm_abduction": 45.0,
+      "leg_stance": 1.5,
+      "definition": 0.9,
+      "head_width": 16.6608,
+      "head_depth": 19.4376
+    }
+  },
+  "gains": {
+    "chest": 0.9456041413805037,
+    "waist": 0.9533578148271576,
+    "hip": 0.9527825370154897
+  },
+  "verification": {
+    "chest": {
+      "target": 104.0,
+      "measured": 104.03,
+      "error_pct": 0.03
+    },
+    "waist": {
+      "target": 92.0,
+      "measured": 91.95,
+      "error_pct": -0.06
+    },
+    "hip": {
+      "target": 101.0,
+      "measured": 101.17,
+      "error_pct": 0.17
+    },
+    "stature": {
+      "target": 178.0,
+      "measured": 178.95,
+      "error_pct": 0.53
+    },
+    "shoulder_width": {
+      "target": 47.0,
+      "measured": null,
+      "error_pct": null
+    },
+    "foot_length": {
+      "target": 27.06,
+      "measured": 33.17,
+      "error_pct": 22.59
+    },
+    "topology": {
+      "watertight": true,
+      "euler": 2,
+      "genus": 0,
+      "components": 1,
+      "volume_litres": 97.88
+    }
+  },
+  "mesh": {
+    "vertices": 85814,
+    "faces": 171624,
+    "voxel_cm": 0.6,
+    "pose": "a_pose"
+  }
+}

@@ -1,0 +1,10 @@
+out/
+__pycache__/
+*.pyc
+*.obj
+*.stl
+*.glb
+*.ply
+*_rig.json
+.venv/
+.DS_Store
