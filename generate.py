@@ -63,6 +63,16 @@ def main() -> int:
     o.add_argument("--voxel", type=float, help="override voxel size in cm")
     o.add_argument("--hands", choices=["mitt", "fingers"], default="mitt",
                    help="'fingers' needs --quality ultra to resolve the gaps")
+    sk = ap.add_argument_group("skin")
+    sk.add_argument("--skin", action="store_true",
+                    help="bake ambient occlusion, skin tone and per-vertex colour")
+    sk.add_argument("--tone", default="II", choices=list("I II III IV V VI".split()),
+                    help="Fitzpatrick-style tone preset")
+    sk.add_argument("--redness", type=float, default=0.5,
+                    help="0..1 blood perfusion at joints and extremities")
+    sk.add_argument("--translucency", type=float, default=0.5,
+                    help="0..1 subsurface colour bleed")
+
     o.add_argument("--pose", choices=list(POSE_PRESETS), default="a_pose")
     o.add_argument("--no-calibrate", action="store_true")
     o.add_argument("--formats", default="obj,stl,glb",
@@ -99,7 +109,9 @@ def main() -> int:
                                               hand_detail=args.hands)
 
     import trimesh
+    from pxhuman.mesh import clean_mesh
     mesh = trimesh.Trimesh(vertices=verts, faces=faces, process=True)
+    mesh, clean_info = clean_mesh(mesh)
     mesh.fix_normals()
     verts, faces = np.asarray(mesh.vertices), np.asarray(mesh.faces)
     normals = np.asarray(mesh.vertex_normals)
@@ -114,6 +126,24 @@ def main() -> int:
         posed = apply_pose(verts, joints, idx, w, names, POSE_PRESETS[args.pose])
         print(f"  applied pose preset '{args.pose}'")
 
+    colours = ao = rough = uv = None
+    rough_mean = 0.62
+    if args.skin:
+        print("\nSkin")
+        from pxhuman import skin as skinmod
+        ao = skinmod.ambient_occlusion(field, verts, normals, p.stature)
+        ao = skinmod.smooth_scalar(ao, faces, iterations=5, strength=0.7)
+        curv = skinmod.curvature_proxy(field, verts, normals, p.stature)
+        curv = skinmod.smooth_scalar(curv, faces, iterations=4, strength=0.7)
+        colours = skinmod.skin_colours(verts, normals, ao, curv, p, p.derived,
+                                       tone=args.tone, redness=args.redness,
+                                       translucency=args.translucency)
+        rough = skinmod.roughness_for(ao, curv)
+        uv = skinmod.cylindrical_uv(verts, p)
+        rough_mean = float(rough.mean())
+        print(f"  tone {args.tone}  AO mean {ao.mean():.3f} "
+              f"(min {ao.min():.3f})  roughness mean {rough_mean:.3f}")
+
     print("\nVerifying")
     rep = audit(p, gains, voxel=max(voxel, 0.8), hand_detail=args.hands)
     topo = verify(mesh, p)["topology"]
@@ -125,8 +155,12 @@ def main() -> int:
         else:
             print(f"  {key:<9} target {r['target']:7.2f}  measured {r['measured']:7.2f}"
                   f"   error {r['error_pct']:+.2f} %")
+    topo["fragments_removed"] = clean_info["removed"]
+    rep["topology"] = topo
     print(f"  topology  watertight={topo['watertight']} genus={topo['genus']} "
-          f"components={topo['components']} volume={topo['volume_litres']} L")
+          f"components={topo['components']} volume={topo['volume_litres']} L"
+          + (f"  (removed {clean_info['removed']} fragment(s))"
+             if clean_info["removed"] else ""))
 
     stem = Path(args.out)
     stem.parent.mkdir(parents=True, exist_ok=True)
@@ -136,8 +170,13 @@ def main() -> int:
         written.append(export.write_obj(f"{stem}.obj", posed, faces, normals))
     tri = [f for f in fmts if f in ("stl", "glb", "ply")]
     if tri:
-        out, _ = export.write_trimesh_formats(stem, posed, faces, tri)
+        out, _ = export.write_trimesh_formats(stem, posed, faces, tri,
+                                              colours=colours, uv=uv,
+                                              roughness=rough_mean)
         written.extend(out.values())
+    if colours is not None:
+        written.append(export.write_skin_sidecar(f"{stem}_skin.npz", colours,
+                                                 ao, rough, uv, args.tone))
     written.append(export.write_rig_json(f"{stem}_rig.json", joints, idx, w, names,
                                          p.to_dict(), rep))
     written.append(export.write_blender_script(stem.parent / "import_pxhuman.py"))

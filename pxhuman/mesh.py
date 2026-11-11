@@ -138,6 +138,42 @@ def audit(p: BodyParams, gains: Dict[str, float], voxel: float = 0.7,
 # ---------------------------------------------------------------------------
 # verification
 # ---------------------------------------------------------------------------
+def clean_mesh(mesh, rel_threshold: float = 1e-3, verbose: bool = True):
+    """Drop disconnected fragments far smaller than the body.
+
+    Marching cubes over a field built from smooth operators occasionally emits
+    a paper-thin shard where two surfaces run almost tangent to one another.
+    They carry no volume and are not part of the body, but they do corrupt the
+    component count and the Euler characteristic. Anything below
+    `rel_threshold` of the largest piece is removed and reported -- never
+    silently, because a fragment that is NOT tiny means something real is
+    detaching and that must stay visible.
+    """
+    try:
+        parts = mesh.split(only_watertight=False)
+    except Exception:
+        return mesh, dict(removed=0, removed_volume=0.0, kept=1)
+    if len(parts) <= 1:
+        return mesh, dict(removed=0, removed_volume=0.0, kept=1)
+
+    vols = np.array([abs(float(p.volume)) for p in parts])
+    keep = vols >= vols.max() * rel_threshold
+    if keep.sum() == len(parts):
+        return mesh, dict(removed=0, removed_volume=0.0, kept=len(parts))
+
+    dropped = float(vols[~keep].sum())
+    kept_parts = [p for p, k in zip(parts, keep) if k]
+    import trimesh
+    out = trimesh.util.concatenate(kept_parts) if len(kept_parts) > 1 else kept_parts[0]
+    info = dict(removed=int((~keep).sum()),
+                removed_volume=round(dropped / 1000.0, 6),
+                kept=len(kept_parts))
+    if verbose and info["removed"]:
+        print(f"  cleanup: removed {info['removed']} fragment(s), "
+              f"{info['removed_volume']:.6f} L total")
+    return out, info
+
+
 def cross_section_loops(mesh, height: float):
     """Closed cross-section polylines at y=height, without shapely/rtree.
 

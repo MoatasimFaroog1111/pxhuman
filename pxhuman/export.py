@@ -56,15 +56,59 @@ def write_rig_json(path, joints: Dict[str, np.ndarray], idx: np.ndarray,
     return path
 
 
-def write_trimesh_formats(path_stem, verts, faces, formats=("stl", "glb", "ply")):
+def write_trimesh_formats(path_stem, verts, faces, formats=("stl", "glb", "ply"),
+                          colours=None, uv=None, roughness: float = 0.62):
+    """Export. When per-vertex colours are supplied the GLB and PLY carry them,
+    and the GLB gets a skin-appropriate PBR material."""
     import trimesh
     m = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
+
+    if colours is not None:
+        rgba = np.empty((len(verts), 4), dtype=np.uint8)
+        srgb = np.clip(colours, 0.0, 1.0) ** (1.0 / 2.2)
+        rgba[:, :3] = np.round(srgb * 255).astype(np.uint8)
+        rgba[:, 3] = 255
+        m.visual = trimesh.visual.ColorVisuals(mesh=m, vertex_colors=rgba)
+
     out = {}
     for ext in formats:
         p = Path(f"{path_stem}.{ext}")
-        m.export(p)
+        if ext == "glb" and colours is not None:
+            g = m.copy()
+            mat = trimesh.visual.material.PBRMaterial(
+                name="skin",
+                baseColorFactor=[255, 255, 255, 255],
+                metallicFactor=0.0,
+                roughnessFactor=float(roughness),
+                doubleSided=False,
+            )
+            vis = trimesh.visual.TextureVisuals(material=mat)
+            if uv is not None:
+                vis.uv = uv
+            vis.vertex_attributes = {}
+            g.visual = m.visual          # keep colours; material rides along
+            try:
+                g.visual.material = mat
+            except Exception:
+                pass
+            g.export(p)
+        else:
+            m.export(p)
         out[ext] = p
     return out, m
+
+
+def write_skin_sidecar(path, colours, ao, roughness, uv, tone: str):
+    """Per-vertex skin channels, for anyone who wants to rebuild the look."""
+    np.savez_compressed(
+        path,
+        colour_linear=np.asarray(colours, np.float32),
+        ambient_occlusion=np.asarray(ao, np.float32),
+        roughness=np.asarray(roughness, np.float32),
+        uv=np.asarray(uv, np.float32),
+        tone=np.array([tone]),
+    )
+    return Path(path)
 
 
 BLENDER_SCRIPT = '''"""

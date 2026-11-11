@@ -14,6 +14,12 @@ ovoid with no facial features.
 `--definition 0.9 --muscle 0.75 --bodyfat 0.32` — same measurements, muscle
 layer on.
 
+![skin layer](docs/preview-skin.png)
+
+`--proportion 1.0 --definition 0.35 --skin --tone II` — second proportion
+template with the skin layer. The head is a featureless ovoid in every
+configuration; no facial features are generated.
+
 ## Quick start
 
 Install once:
@@ -85,6 +91,22 @@ against the *muscled* surface — so adding relief does not silently inflate the
 requested chest, waist or hip. Measured error with relief at full strength
 stays under 0.25%.
 
+**Skin layer** (`--skin`). Per-vertex colour from a numeric tone model, with
+`--tone` (Fitzpatrick-style presets I–VI), `--redness` and `--translucency`.
+Tone is modulated by position: more blood perfusion at joints and extremities,
+a cooler paler abdomen, subsurface colour bleeding through thin convex
+regions, and occlusion that warms as it darkens rather than just darkening.
+Exports vertex colours in GLB/PLY, a cylindrical UV set, and an `.npz`
+sidecar with the raw colour, AO, roughness and UV channels.
+
+Ambient occlusion is computed **from the distance field**, not by ray
+casting. The field is already in hand, so marching a few steps along each
+vertex normal and comparing the field value against the distance travelled
+gives the standard SDF occlusion estimate for a fraction of the cost. It is
+then Laplacian-smoothed across the mesh — sampled raw it picks up the
+sub-millimetre C1 seam where a clamped muscle belly meets the surface and
+renders it as a scratch.
+
 **Rig.** 25 joints in a standard hierarchy, inverse-distance linear blend
 skinning against bone segments, 4 influences per vertex, with pose presets
 (`a_pose`, `t_pose`, `relaxed`, `stride`, `sit`).
@@ -128,7 +150,7 @@ all genus 0, watertight, single component:
 
 ### Topology notes
 
-Five failure modes were found and fixed during validation, each worth knowing
+Six failure modes were found and fixed during validation, each worth knowing
 if you modify the field. The last two were found only after the muscle layer
 widened the parameter grid — and one of them turned out to be a pre-existing
 base-geometry defect that the original sweep had simply never exercised:
@@ -142,6 +164,15 @@ base-geometry defect that the original sweep had simply never exercised:
 3. **Inner thighs and calves webbing while the knees stay apart.** Each side's
    limbs are now blended onto its own copy of the midline field and the two
    sides combined with a hard union, so opposite limbs can never blend.
+6. **Paper-thin shards at the muscle clamp seam.** Where a clamped belly runs
+   almost tangent to the surface, a fine enough voxel resolves a sliver of
+   near-zero volume. Four appeared at 0.60 cm and none at 0.85 cm — finer
+   resolution made it *worse*, which is the tell for a tangency artefact
+   rather than a modelling error. The clamp smoothing was widened, and
+   `clean_mesh` now drops sub-threshold fragments and **reports** them; a
+   fragment that is not tiny still shows up, because that would mean
+   something real is detaching.
+
 4. **Muscle bellies detaching into free-floating blobs.** A belly anchored on
    an analytic surface estimate floats off wherever the real blended surface
    differs, and a belly widened enough to keep its visible size while sunk

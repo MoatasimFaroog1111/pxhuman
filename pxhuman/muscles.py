@@ -61,8 +61,11 @@ class MuscleLayer:
         return self.amp > 1e-3
 
     def _clamp(self, belly: np.ndarray, f: np.ndarray, relief: float) -> np.ndarray:
+        # The smoothing here matters: too tight and the belly surface meets the
+        # clamping surface almost tangentially, which marching cubes resolves
+        # into paper-thin disconnected shards once the voxel is fine enough.
         margin = max(relief * self.SHELL, 1e-3)
-        return smax(belly, f - margin, margin * 0.6)
+        return smax(belly, f - margin, margin * 1.15)
 
     # ------------------------------------------------------------------
     # anchoring helpers
