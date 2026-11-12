@@ -237,7 +237,7 @@ def check(label, clip_path, avatar_g, expect_local=None, old=False):
     line = (f"{label:12s} dir err {worst:6.3f}deg ({worst_b:12s}) "
             f"hips err {hip_err*1000:6.3f}mm  upright {upright}  "
             f"height {height.min():.2f}-{height.max():.2f}m  "
-            f"floor {floor.min():+.3f}m  rest-mismatch: {rt.report(2)}")
+            f"floor {floor.min():+.3f}m  rest: {rt.report()}")
     if expect_local is not None:
         lerr = 0.0
         for b, q in expect_local.items():

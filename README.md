@@ -257,8 +257,27 @@ show.
 
 ### Body animation
 
-`--body clip.glb` merges a skeletal clip — Mixamo clips need only converting
-from FBX to glTF first. MetaPerson's skeleton already uses Mixamo's bone
+`--body clip.glb` merges a skeletal clip. Mixamo downloads FBX, which only
+Blender reads reliably, so `fbx2glb.py` converts it:
+
+```
+python fbx2glb.py Angry.fbx
+python talk.py avatar/model.glb "..." --body Angry.glb --out out/angry.glb
+```
+
+It needs Blender installed but not on PATH: run with ordinary Python, it
+looks for `--blender`, then `$BLENDER`, then PATH, then the usual install
+folders on Windows, macOS and Linux (newest version first), and re-runs
+itself inside Blender. With the `bpy` module installed it converts
+in-process. Several files convert in one call; meshes are dropped unless
+`--keep-mesh`, since a clip needs only the skeleton and its motion.
+
+Download from Mixamo as FBX Binary, 30 fps, keyframe reduction none;
+"Without Skin" gives the smallest file.
+
+Speech sets the animation's length, and a shorter clip loops. To play a clip
+exactly once, fit the speech to it with `--rate`: the duration line reports
+the length, and duration scales as 1/rate. MetaPerson's skeleton already uses Mixamo's bone
 names, so bones match directly and `mixamorig:` prefixes are stripped.
 
 Matching names is not matching rotations. A node's rotation is expressed in
@@ -277,14 +296,26 @@ Wt(t)    = delta(t) · A · Wt_rest     the same motion on the avatar
 local(t) = Wt_parent(t)⁻¹ · Wt(t)     back into the avatar's hierarchy
 ```
 
-`A` aligns differing rest poses: per bone, the rotation that takes the
-avatar's rest direction onto the clip's, applied as a residual after the
-parent's so a rigidly rotated subtree (an A-pose arm) gets no spurious twist
-on its side branches. Matching T-poses give identity; an A-pose clip on the
-T-pose avatar reports `rest mismatch LeftArm 40deg, RightArm 40deg` and the
-arms follow the clip. `--no-rest-align` turns it off. Rest rotations are
-read from the skin's inverse bind matrices where present, since a file saved
-mid-animation can carry posed node values.
+`A` aligns the two rest *poses*, and only where they really are different
+poses. Two rigs never share an anatomy: against Mixamo, MetaPerson's spine
+curves 19° further, its foot bone points 22° lower and its clavicles sit 37°
+higher. Those are shapes. An earlier version aligned every bone's direction,
+which bent the avatar into Mixamo's body; the feet alone tipped the toes
+4.6 cm through the floor. A pose difference (arms in an A-pose against a
+T-pose, legs spread) shows at the root of a limb, so alignment is applied
+only at the upper arms and thighs, and only above 10°. It is one rotation
+per limb, fitted over every joint below the root (Kabsch), because a single
+bone direction leaves the twist free and the hand would land rotated around
+the arm. `talk.py` prints what it did:
+
+```
+rest pose   aligned LeftArm 11deg, RightArm 11deg (46 bones differ in shape only, up to 37deg; kept as the avatar's own)
+```
+
+The 11° is MetaPerson's rest elbows, which are bent where Mixamo's are
+straight; an A-pose clip reports about 40°. `--no-rest-align` turns
+alignment off. Rest rotations are read from the skin's inverse bind matrices
+where present, since a file saved mid-animation can carry posed node values.
 
 `--root-motion` moves the hips by the clip's displacement from its *own*
 rest position, scaled by the ratio of leg lengths, so centimetre rigs under
@@ -354,6 +385,7 @@ pxhuman/rig.py      bones, skinning weights, posing, presets
 pxhuman/export.py   OBJ / STL / GLB / rig JSON / Blender importer
 pxhuman/skeleton.py glTF hierarchy: bind-pose rest, posed world transforms, skinning
 pxhuman/bodyanim.py body clip loading and world-space retargeting
+fbx2glb.py          FBX clip -> GLB through Blender, found automatically
 verify_retarget.py  retargeting checks against rigs with known answers
 generate.py         CLI
 render.py           offscreen preview renderer

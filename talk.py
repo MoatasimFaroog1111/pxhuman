@@ -197,7 +197,7 @@ def main() -> int:
         # world-space transfer: the clip's local numbers are only meaningful
         # in its own rig's bone frames (see pxhuman/bodyanim.py)
         rt = Retarget(clip, g, align=not args.no_rest_align)
-        print(f"  rest mismatch     {rt.report()}")
+        print(f"  rest pose         {rt.report()}")
         if rt.src.rebound:
             print(f"  rest from bind    {rt.src.rebound} clip bones "
                   f"(node TRS was not the bind pose)")
