@@ -100,6 +100,63 @@ def main():
     dst.parent.mkdir(parents=True, exist_ok=True)
     Image.fromarray(sheet).save(dst)
     print(f"wrote {dst}")
+    return body_check(g, anim)
+
+
+HEAD_ONLY = {"Head", "Neck", "Neck1", "Neck2"}
+
+
+def body_check(g: Glb, anim) -> int:
+    """Pose the skeleton from the file and check the body is still a body.
+
+    The mouth check above cannot see the body: a file whose legs point at
+    the sky passes it. This poses every joint from the animation, skins the
+    meshes, and checks the figure stays upright and on its floor.
+    """
+    from pxhuman.skeleton import Skeleton, animation_overrides, skinned_vertices
+    from pxhuman.bodyanim import canonical
+
+    nodes = g.json["nodes"]
+    bones = {canonical(nodes[c["target"]["node"]].get("name", ""))
+             for c in anim["channels"] if c["target"]["path"] != "weights"}
+    if not (bones - HEAD_ONLY):
+        print("\nbody: head and neck only, nothing to check")
+        return 0
+    sk = Skeleton(g)
+    tmax = max(read_accessor(g, anim["samplers"][c["sampler"]]["input"])[-1]
+               for c in anim["channels"])
+    times = np.linspace(0, tmax, 24).astype(np.float32)
+    rot, trans = animation_overrides(g, sk, times)
+    _, P, _ = sk.world(rot, trans, len(times))
+    V = skinned_vertices(g, sk, rot, trans, len(times), stride=5)
+    V0 = skinned_vertices(g, sk, stride=5)[0]
+
+    idx = {canonical(n): i for i, n in enumerate(sk.names)}
+    fails = []
+    if all(b in idx for b in ("Hips", "LeftFoot", "RightFoot", "Head")):
+        hy = P[:, idx["Hips"], 1]
+        if not (np.all(P[:, idx["LeftFoot"], 1] < hy) and
+                np.all(P[:, idx["RightFoot"], 1] < hy)):
+            fails.append("feet above the hips")
+        if not np.all(P[:, idx["Head"], 1] > hy):
+            fails.append("head below the hips")
+    h0, f0 = V0[:, 1].max() - V0[:, 1].min(), V0[:, 1].min()
+    floor = V[:, :, 1].min(1)
+    height = V[:, :, 1].max(1) - floor
+    if floor.min() < f0 - 0.05 * h0:
+        fails.append(f"sinks {100*(f0-floor.min()):.0f} cm through the floor")
+    if height.min() < 0.5 * h0:
+        fails.append(f"collapsed to {height.min():.2f} m")
+    if height.max() > 1.25 * h0:
+        fails.append("stretched beyond its rest height")
+
+    print(f"\nbody: {len(bones - HEAD_ONLY)} bones animated, "
+          f"height {height.min():.2f}-{height.max():.2f} m (rest {h0:.2f}), "
+          f"lowest point {floor.min():+.3f} m (rest {f0:+.3f})")
+    if fails:
+        print("FAIL: " + "; ".join(fails))
+        return 1
+    print("body OK: upright, on the floor")
     return 0
 
 

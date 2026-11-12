@@ -261,13 +261,50 @@ show.
 from FBX to glTF first. MetaPerson's skeleton already uses Mixamo's bone
 names, so bones match directly and `mixamorig:` prefixes are stripped.
 
-Rotation is copied; translation is not, unless `--root-motion` asks for the
-hips. Two rigs that share bone names rarely share limb lengths or units, and
-copying translation between them is what tears a character apart.
+Matching names is not matching rotations. A node's rotation is expressed in
+its rig's own bone axes, and those differ: MetaPerson's thigh carries a ~177°
+rest rotation because its bone axis points down the leg, while a rig built
+with identity rests carries none. An earlier version copied local rotations
+by name, which turned the legs upside down, and copied the hips' absolute
+position, which dropped the avatar 94 cm into the floor.
+
+The clip is therefore transferred as motion in world space
+(`pxhuman/bodyanim.py`):
+
+```
+delta(t) = Ws(t) · Ws_rest⁻¹          how each source bone moved
+Wt(t)    = delta(t) · A · Wt_rest     the same motion on the avatar
+local(t) = Wt_parent(t)⁻¹ · Wt(t)     back into the avatar's hierarchy
+```
+
+`A` aligns differing rest poses: per bone, the rotation that takes the
+avatar's rest direction onto the clip's, applied as a residual after the
+parent's so a rigidly rotated subtree (an A-pose arm) gets no spurious twist
+on its side branches. Matching T-poses give identity; an A-pose clip on the
+T-pose avatar reports `rest mismatch LeftArm 40deg, RightArm 40deg` and the
+arms follow the clip. `--no-rest-align` turns it off. Rest rotations are
+read from the skin's inverse bind matrices where present, since a file saved
+mid-animation can carry posed node values.
+
+`--root-motion` moves the hips by the clip's displacement from its *own*
+rest position, scaled by the ratio of leg lengths, so centimetre rigs under
+a 0.01 root and rigs built at the origin both land correctly.
 
 Where both the clip and the speech want the neck and head, the body pose is
 the base and the speech motion composes on top of it as a delta, rather than
 one silently overwriting the other.
+
+```
+python verify_retarget.py avatar/model.glb out/retarget_check.png
+```
+
+builds three source rigs from the avatar's joints — the avatar's own rig, an
+identity-rest centimetre rig, and the same in an A-pose — drives them with a
+known motion, and checks every bone's world direction on the avatar against
+the source (error ≤ 0.01°), the hips displacement (exact), that the skinned
+figure stays upright and on its floor, and that rest alignment flags only the
+arms. A negative control runs the old copy-by-name transfer and must fail
+(178° error, hips 95 m off).
 
 ### Audio2Face
 
@@ -284,6 +321,10 @@ and a GPU endpoint. Prefer a weights file from the official sample client.
 `verify_talk.py` is the check that matters: it reads the morph targets back
 out of the written file, applies the animated weights, and renders the mouth.
 A file that writes without an exception is not evidence that anything moves.
+When the animation drives the body it also poses the skeleton, skins the
+meshes, and fails if the feet rise above the hips, the head drops below
+them, or the figure sinks through its floor or collapses — the mouth check
+alone passed a file whose legs pointed at the sky.
 
 ## Known limits
 
@@ -311,6 +352,9 @@ pxhuman/muscles.py  anatomical relief layer, shell clamping, surface anchoring
 pxhuman/mesh.py     volume sampling, surface extraction, calibration, audit
 pxhuman/rig.py      bones, skinning weights, posing, presets
 pxhuman/export.py   OBJ / STL / GLB / rig JSON / Blender importer
+pxhuman/skeleton.py glTF hierarchy: bind-pose rest, posed world transforms, skinning
+pxhuman/bodyanim.py body clip loading and world-space retargeting
+verify_retarget.py  retargeting checks against rigs with known answers
 generate.py         CLI
 render.py           offscreen preview renderer
 viewer/index.html   interactive browser preview with live sliders

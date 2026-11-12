@@ -1,16 +1,34 @@
 """
 Load a skeletal animation from one glTF and retarget it onto another.
 
-Written for Mixamo clips, which is nearly a no-op case: MetaPerson's skeleton
-uses Mixamo's own bone names (Hips, Spine, Spine1, Spine2, Neck, Head,
-LeftArm, LeftForeArm, LeftHandThumb1 ...), so bones match by name and no
-retargeting solve is needed. Mixamo's FBX exporter prefixes every bone with
-"mixamorig:", which is stripped here.
+Bones are matched by name. MetaPerson uses Mixamo's names (Hips, Spine,
+Spine1, Spine2, Neck, Head, LeftArm, LeftForeArm, ...), and Mixamo's
+"mixamorig:" prefix is stripped, so a Mixamo clip matches with no mapping.
 
-Rotation is copied; translation is not, except optionally on the hips. Two
-rigs that share bone names rarely share limb lengths or units, and copying
-translation across them is what tears a character apart. Rotation-only
-retargeting is scale-free and is the safe default.
+Matching names is not the same as matching rotations. A glTF node's
+rotation is relative to its parent *and to the bone's own axis convention*,
+and that convention differs between rigs: MetaPerson's thigh carries a ~177
+degree rest rotation because its bone axis points down the leg, while a rig
+built with identity rests carries none. Copying local rotations by name
+therefore puts the clip's numbers into the wrong frame -- on MetaPerson it
+turned both legs upside down.
+
+So the clip is transferred as motion in world space, not as numbers:
+
+    delta(t)  = Ws(t) * Ws_rest^-1            how the source bone moved
+    Wt(t)     = delta(t) * A * Wt_rest        same motion on the target
+    local(t)  = Wt_parent(t)^-1 * Wt(t)       back into the target hierarchy
+
+A aligns the two rest poses: the shortest rotation taking the target bone's
+rest direction onto the source's. With matching T-poses it is identity; with
+an A-pose clip on a T-pose avatar it is what brings the arms down to where
+the clip has them. Twist about the bone is carried by the delta.
+
+Hip translation (--root-motion) is the source hips' displacement from their
+own rest position, scaled by the ratio of leg lengths, added to the
+target's rest position. Copying the absolute value is what dropped the
+avatar 94 cm into the floor: a clip's hips sit wherever its rig was built,
+often at the origin, and in its own units.
 """
 from __future__ import annotations
 
@@ -19,6 +37,7 @@ import re
 from typing import Dict, Tuple
 
 from .gltf_anim import Glb
+from .skeleton import Skeleton, quat_to_mat, mat_to_quat, arc_between, angle_deg
 
 PREFIX = re.compile(r"^(mixamorig\d*:|Armature\|)", re.IGNORECASE)
 
@@ -131,3 +150,156 @@ def match_report(clip: BodyClip, target: Glb) -> Tuple[list, list]:
     matched = [b for b in clip.bones() if b in have]
     missing = [b for b in clip.bones() if b not in have]
     return matched, missing
+
+
+# ---------------------------------------------------------------------------
+LEG = ["Hips", "LeftUpLeg", "LeftLeg", "LeftFoot"]
+
+
+def _continuous(q: np.ndarray) -> np.ndarray:
+    """Flip quaternion signs so consecutive keys never take the long way."""
+    q = q.copy()
+    for i in range(1, len(q)):
+        if np.dot(q[i - 1], q[i]) < 0:
+            q[i] = -q[i]
+    return q
+
+
+def _chain_length(P: np.ndarray, idx: Dict[str, int]) -> float | None:
+    if not all(b in idx for b in LEG):
+        return None
+    pts = [P[idx[b]] for b in LEG]
+    return float(sum(np.linalg.norm(pts[i + 1] - pts[i]) for i in range(3)))
+
+
+class Retarget:
+    """Transfer a BodyClip onto a target skeleton through world space."""
+
+    def __init__(self, clip: BodyClip, target: Glb, align: bool = True):
+        self.clip = clip
+        self.src = Skeleton(clip.src)
+        self.tgt = Skeleton(target)
+        self.s_idx: Dict[str, int] = {}
+        for i, nm in enumerate(self.src.names):
+            c = canonical(nm)
+            if c:
+                self.s_idx.setdefault(c, i)
+        self.t_idx: Dict[str, int] = {}
+        for i, nm in enumerate(self.tgt.names):
+            c = canonical(nm)
+            if c:
+                self.t_idx.setdefault(c, i)
+        # only bones that are joints of the target's skin are worth driving;
+        # name collisions with mesh nodes ("Head" vs "AvatarHead") stay out
+        skin_j = set()
+        for sk in target.json.get("skins", []):
+            skin_j.update(sk["joints"])
+        self.pairs: Dict[int, int] = {
+            ti: self.s_idx[n] for n, ti in self.t_idx.items()
+            if n in self.s_idx and (not skin_j or ti in skin_j)}
+
+        RS0, PS0, self.SS0 = self.src.world()
+        RT0, PT0, self.ST0 = self.tgt.world()
+        self.RS0, self.PS0 = RS0[0], PS0[0]
+        self.RT0, self.PT0 = RT0[0], PT0[0]
+
+        # rest alignment, per target bone
+        self.A: Dict[int, np.ndarray] = {}
+        self.mismatch: Dict[str, float] = {}
+        I = np.eye(3)
+        for ti in self.tgt.order:
+            if ti not in self.pairs:
+                continue
+            si = self.pairs[ti]
+            p = self.tgt.parent[ti]             # nearest aligned ancestor
+            while p >= 0 and p not in self.A:
+                p = self.tgt.parent[p]
+            Ap = self.A[p] if p >= 0 else I
+            A = Ap
+            kids = [c for c in self.tgt.children(ti) if c in self.pairs]
+            if align and len(kids) == 1:
+                c = kids[0]
+                dt = self.PT0[c] - self.PT0[ti]
+                ds = self.PS0[self.pairs[c]] - self.PS0[si]
+                if np.linalg.norm(dt) > 1e-6 and np.linalg.norm(ds) > 1e-9:
+                    # residual after the parent's alignment: a subtree that
+                    # differs only by a rigid rotation (an A-pose arm) gets
+                    # that rotation and no spurious twist on side branches
+                    Rres = arc_between(Ap @ dt, ds)
+                    A = Rres @ Ap
+                    d = float(angle_deg(Rres))
+                    if d >= 1.0:                # where a mismatch starts
+                        self.mismatch[canonical(self.tgt.names[ti])] = d
+            self.A[ti] = A
+
+        ls = _chain_length(self.PS0, self.s_idx)
+        lt = _chain_length(self.PT0, self.t_idx)
+        if ls and lt and ls > 1e-9:
+            self.scale = lt / ls
+        else:
+            hs = self.PS0[self.s_idx["Hips"], 1] if "Hips" in self.s_idx else 0
+            ht = self.PT0[self.t_idx["Hips"], 1] if "Hips" in self.t_idx else 0
+            self.scale = ht / hs if abs(hs) > 1e-9 else 1.0
+
+    # ------------------------------------------------------------------
+    def solve(self, times: np.ndarray, loop: bool = True,
+              root_motion: bool = False, min_deg: float = 0.01):
+        """Returns ({bone: quats (n,4)}, {bone: translations (n,3)})."""
+        n = len(times)
+        src_rot = {}
+        for bone in self.clip.rot:
+            si = self.s_idx.get(bone)
+            q = self.clip.sample_rotation(bone, times, loop=loop)
+            if si is not None and q is not None:
+                src_rot[si] = quat_to_mat(q)
+        src_trans = {}
+        hip = "Hips"
+        if root_motion and hip in self.clip.trans and hip in self.s_idx:
+            src_trans[self.s_idx[hip]] = self.clip.sample_translation(
+                hip, times, loop=loop)
+        RS, PS, _ = self.src.world(src_rot, src_trans, n)
+
+        G: Dict[int, np.ndarray] = {}
+        local: Dict[int, np.ndarray] = {}
+        for ti in self.tgt.order:
+            p = self.tgt.parent[ti]
+            if ti in self.pairs:
+                si = self.pairs[ti]
+                Gi = RS[:, si] @ (self.RS0[si].T @ self.A[ti] @ self.RT0[ti])
+                L = Gi if p < 0 else np.swapaxes(G[p], 1, 2) @ Gi
+                local[ti] = L
+                G[ti] = Gi
+            else:
+                G[ti] = (np.broadcast_to(self.tgt.R[ti], (n, 3, 3)) if p < 0
+                         else G[p] @ self.tgt.R[ti])
+
+        rot_out: Dict[str, np.ndarray] = {}
+        for ti, L in local.items():
+            dev = angle_deg(np.swapaxes(L, 1, 2) @ self.tgt.R[ti]).max()
+            if dev < min_deg:
+                continue
+            rot_out[canonical(self.tgt.names[ti])] = _continuous(
+                mat_to_quat(L).astype(np.float32))
+
+        trans_out: Dict[str, np.ndarray] = {}
+        if src_trans and hip in self.t_idx:
+            si, ti = self.s_idx[hip], self.t_idx[hip]
+            dp = (PS[:, si] - self.PS0[si]) * self.scale
+            want = self.PT0[ti] + dp
+            p = self.tgt.parent[ti]
+            if p < 0:
+                tl = want
+            else:
+                Rp, Pp = G[p], None
+                # parent position: the target's hips parent is not driven
+                # by the clip in any rig this targets, so its rest stands
+                _, PW, SW = self.tgt.world()
+                Pp = PW[0, p]
+                tl = np.einsum("nji,nj->ni", Rp, want - Pp) / SW[p]
+            trans_out[hip] = tl.astype(np.float32)
+        return rot_out, trans_out
+
+    def report(self, top: int = 4) -> str:
+        worst = sorted(self.mismatch.items(), key=lambda kv: -kv[1])[:top]
+        s = ", ".join(f"{b} {d:.0f}deg" for b, d in worst if d >= 1.0)
+        return s or "rest poses agree (<1deg)"

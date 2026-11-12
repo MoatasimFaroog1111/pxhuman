@@ -57,7 +57,10 @@ def main() -> int:
                     help="animation index or name inside --body")
     ap.add_argument("--body-loop", action="store_true", default=True)
     ap.add_argument("--root-motion", action="store_true",
-                    help="also copy hip translation (needs matching scale)")
+                    help="also move the hips: the clip's offset from its own "
+                         "rest, scaled by leg length")
+    ap.add_argument("--no-rest-align", action="store_true",
+                    help="do not align differing rest poses (A- vs T-pose)")
     ap.add_argument("--head-motion", type=float, default=1.0)
     ap.add_argument("--no-blink", action="store_true")
     ap.add_argument("--name", default="Speech")
@@ -177,8 +180,9 @@ def main() -> int:
     # base and the speech motion is composed on top of it as a delta.
     clip = None
     body_rot: dict[str, np.ndarray] = {}
+    body_trans: dict[str, np.ndarray] = {}
     if args.body:
-        from pxhuman.bodyanim import BodyClip, match_report, canonical
+        from pxhuman.bodyanim import BodyClip, Retarget, match_report
         try:
             which = int(args.body_clip)
         except ValueError:
@@ -190,10 +194,17 @@ def main() -> int:
         if missing:
             print(f"  unmatched ({len(missing)}): {', '.join(missing[:8])}"
                   f"{' ...' if len(missing) > 8 else ''}")
-        for bone in matched:
-            q = clip.sample_rotation(bone, times, loop=args.body_loop)
-            if q is not None:
-                body_rot[bone] = q
+        # world-space transfer: the clip's local numbers are only meaningful
+        # in its own rig's bone frames (see pxhuman/bodyanim.py)
+        rt = Retarget(clip, g, align=not args.no_rest_align)
+        print(f"  rest mismatch     {rt.report()}")
+        if rt.src.rebound:
+            print(f"  rest from bind    {rt.src.rebound} clip bones "
+                  f"(node TRS was not the bind pose)")
+        body_rot, body_trans = rt.solve(times, loop=args.body_loop,
+                                        root_motion=args.root_motion)
+        if args.root_motion:
+            print(f"  root scale        x{rt.scale:.3f} (leg length ratio)")
 
     head_names = {b for b, _ in HEAD_CHAIN}
 
@@ -224,32 +235,29 @@ def main() -> int:
 
     # ---- the rest of the body -------------------------------------------
     if body_rot:
-        from pxhuman.bodyanim import canonical
-        name_to_node = {}
-        for i, nd in enumerate(g.json.get("nodes", [])):
-            cn = canonical(nd.get("name", ""))
-            if cn:
-                name_to_node.setdefault(cn, i)
         count = 0
         for bone, q in body_rot.items():
             if bone in head_names:
                 continue
-            ni = name_to_node.get(bone)
+            ni = g.node_index_by_name(bone)
+            if ni is None:
+                from pxhuman.bodyanim import canonical
+                ni = next((i for i, nd in enumerate(g.json["nodes"])
+                           if canonical(nd.get("name", "")) == bone), None)
             if ni is None:
                 continue
             tracks.append(dict(node=ni, path="rotation", times=times, values=q))
             count += 1
         print(f"  body bones        {count} rotation tracks")
 
-        if args.root_motion:
-            t = clip.sample_translation("Hips", times, loop=args.body_loop)
-            ni = name_to_node.get("Hips")
-            if t is not None and ni is not None:
-                tracks.append(dict(node=ni, path="translation",
-                                   times=times, values=t))
-                print("  root motion       Hips translation copied")
-            else:
-                print("  root motion       no hip translation in the clip")
+    if args.root_motion and clip is not None:
+        t = body_trans.get("Hips")
+        ni = g.node_index_by_name("Hips")
+        if t is not None and ni is not None:
+            tracks.append(dict(node=ni, path="translation", times=times, values=t))
+            print("  root motion       Hips offset from rest, scaled")
+        else:
+            print("  root motion       no hip translation in the clip")
 
     if not tracks:
         print("no drivable targets found - is this a MetaPerson avatar?")
