@@ -19,10 +19,17 @@ So the clip is transferred as motion in world space, not as numbers:
     Wt(t)     = delta(t) * A * Wt_rest        same motion on the target
     local(t)  = Wt_parent(t)^-1 * Wt(t)       back into the target hierarchy
 
-A aligns the two rest poses: the shortest rotation taking the target bone's
-rest direction onto the source's. With matching T-poses it is identity; with
-an A-pose clip on a T-pose avatar it is what brings the arms down to where
-the clip has them. Twist about the bone is carried by the delta.
+A aligns the two rest *poses*, and only where they are really different
+poses. Two rigs never share an anatomy: against Mixamo, MetaPerson's spine
+is curved 19 degrees further, its foot bone points 22 degrees lower and its
+clavicles 37 degrees higher. Those are shapes, and forcing them to the
+source's directions bends the avatar into the source's body -- the feet
+alone tipped the toes 4.6 cm through the floor. A pose difference (arms in
+an A-pose against a T-pose, legs spread) shows up at the root of a limb, so
+alignment is applied there only, at the upper arm and thigh, and only past
+ALIGN_MIN_DEG; the rest of the limb inherits it. Mixamo on MetaPerson needs
+none; an A-pose clip gets its arms aligned and nothing else. Twist about
+the bone is carried by the delta.
 
 Hip translation (--root-motion) is the source hips' displacement from their
 own rest position, scaled by the ratio of leg lengths, added to the
@@ -155,6 +162,11 @@ def match_report(clip: BodyClip, target: Glb) -> Tuple[list, list]:
 # ---------------------------------------------------------------------------
 LEG = ["Hips", "LeftUpLeg", "LeftLeg", "LeftFoot"]
 
+# where a rest *pose* difference shows (see module docstring); below this
+# angle a difference is anatomy -- bone placement -- and is left alone
+LIMB_ROOTS = ("LeftArm", "RightArm", "LeftUpLeg", "RightUpLeg")
+ALIGN_MIN_DEG = 10.0
+
 
 def _continuous(q: np.ndarray) -> np.ndarray:
     """Flip quaternion signs so consecutive keys never take the long way."""
@@ -203,33 +215,36 @@ class Retarget:
         self.RS0, self.PS0 = RS0[0], PS0[0]
         self.RT0, self.PT0 = RT0[0], PT0[0]
 
-        # rest alignment, per target bone
+        # rest alignment, per target bone, applied at limb roots only
         self.A: Dict[int, np.ndarray] = {}
-        self.mismatch: Dict[str, float] = {}
+        self.mismatch: Dict[str, float] = {}     # aligned: limb root -> deg
+        self.shape: Dict[str, float] = {}        # left alone: bone -> deg
         I = np.eye(3)
         for ti in self.tgt.order:
             if ti not in self.pairs:
                 continue
             si = self.pairs[ti]
+            name = canonical(self.tgt.names[ti])
             p = self.tgt.parent[ti]             # nearest aligned ancestor
             while p >= 0 and p not in self.A:
                 p = self.tgt.parent[p]
             Ap = self.A[p] if p >= 0 else I
             A = Ap
+            if name in LIMB_ROOTS:
+                Rres = self._fit_limb(ti, Ap)
+                d = float(angle_deg(Rres)) if Rres is not None else 0.0
+                if align and d >= ALIGN_MIN_DEG:
+                    A = Rres @ Ap
+                    self.mismatch[name] = d
             kids = [c for c in self.tgt.children(ti) if c in self.pairs]
-            if align and len(kids) == 1:
+            if len(kids) == 1:
                 c = kids[0]
                 dt = self.PT0[c] - self.PT0[ti]
                 ds = self.PS0[self.pairs[c]] - self.PS0[si]
                 if np.linalg.norm(dt) > 1e-6 and np.linalg.norm(ds) > 1e-9:
-                    # residual after the parent's alignment: a subtree that
-                    # differs only by a rigid rotation (an A-pose arm) gets
-                    # that rotation and no spurious twist on side branches
-                    Rres = arc_between(Ap @ dt, ds)
-                    A = Rres @ Ap
-                    d = float(angle_deg(Rres))
-                    if d >= 1.0:                # where a mismatch starts
-                        self.mismatch[canonical(self.tgt.names[ti])] = d
+                    d = float(angle_deg(arc_between(A @ dt, ds)))
+                    if d >= 1.0:
+                        self.shape[name] = d
             self.A[ti] = A
 
         ls = _chain_length(self.PS0, self.s_idx)
@@ -240,6 +255,38 @@ class Retarget:
             hs = self.PS0[self.s_idx["Hips"], 1] if "Hips" in self.s_idx else 0
             ht = self.PT0[self.t_idx["Hips"], 1] if "Hips" in self.t_idx else 0
             self.scale = ht / hs if abs(hs) > 1e-9 else 1.0
+
+    def _fit_limb(self, root: int, Ap: np.ndarray) -> np.ndarray | None:
+        """Best rotation taking the target limb's rest onto the source's.
+
+        Fitted over every matched joint below the limb root (Kabsch, joint
+        offsets from the root as unit vectors weighted by length), not just
+        the first bone: a single direction leaves the twist about that bone
+        free, and the hand and fingers would land rotated around the arm.
+        For a limb that differs by a rigid rotation the fit is exact; where
+        the two differ in shape it averages the differences out.
+        """
+        si = self.pairs[root]
+        H = np.zeros((3, 3))
+        stack = list(self.tgt.children(root))
+        n = 0
+        while stack:
+            j = stack.pop()
+            stack.extend(self.tgt.children(j))
+            if j not in self.pairs:
+                continue
+            vt = Ap @ (self.PT0[j] - self.PT0[root])
+            vs = self.PS0[self.pairs[j]] - self.PS0[si]
+            lt, ls = np.linalg.norm(vt), np.linalg.norm(vs)
+            if lt < 1e-6 or ls < 1e-9:
+                continue
+            H += lt * np.outer(vt / lt, vs / ls)
+            n += 1
+        if n == 0:
+            return None
+        U, _, Vt = np.linalg.svd(H)
+        d = np.sign(np.linalg.det(Vt.T @ U.T)) or 1.0
+        return Vt.T @ np.diag([1.0, 1.0, d]) @ U.T
 
     # ------------------------------------------------------------------
     def solve(self, times: np.ndarray, loop: bool = True,
@@ -299,7 +346,16 @@ class Retarget:
             trans_out[hip] = tl.astype(np.float32)
         return rot_out, trans_out
 
-    def report(self, top: int = 4) -> str:
-        worst = sorted(self.mismatch.items(), key=lambda kv: -kv[1])[:top]
-        s = ", ".join(f"{b} {d:.0f}deg" for b, d in worst if d >= 1.0)
-        return s or "rest poses agree (<1deg)"
+    def report(self) -> str:
+        """One line on the rest poses: what was aligned, and why not more."""
+        if self.mismatch:
+            s = "aligned " + ", ".join(
+                f"{b} {d:.0f}deg" for b, d in
+                sorted(self.mismatch.items(), key=lambda kv: -kv[1]))
+        else:
+            s = "same pose, nothing to align"
+        if self.shape:
+            s += (f" ({len(self.shape)} bones differ in shape only, "
+                  f"up to {max(self.shape.values()):.0f}deg; kept as the "
+                  f"avatar's own)")
+        return s
