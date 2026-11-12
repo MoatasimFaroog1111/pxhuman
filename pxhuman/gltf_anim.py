@@ -42,6 +42,16 @@ class Glb:
         if self.json is None:
             raise ValueError("GLB has no JSON chunk")
 
+    @classmethod
+    def new(cls, nodes: list, scene_roots: list) -> "Glb":
+        """An empty GLB holding only a node hierarchy (for skeletal clips)."""
+        g = cls.__new__(cls)
+        g.json = {"asset": {"version": "2.0", "generator": "pxhuman"},
+                  "scene": 0, "scenes": [{"nodes": list(scene_roots)}],
+                  "nodes": nodes, "buffers": [{"byteLength": 0}]}
+        g.bin = bytearray()
+        return g
+
     # ------------------------------------------------------------------
     def mesh_index_by_name(self, name: str) -> int | None:
         """Find a mesh by name.
