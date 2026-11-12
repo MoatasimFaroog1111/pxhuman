@@ -8,3 +8,6 @@ __pycache__/
 *_rig.json
 .venv/
 .DS_Store
+incoming/
+incoming2/
+*.gif

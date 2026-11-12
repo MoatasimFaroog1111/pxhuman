@@ -214,6 +214,36 @@ On Windows, `blender` must be on PATH or called by full path, e.g.
 Builds the armature, parents the mesh, writes weights into vertex groups, and
 converts centimetres to metres with Z-up.
 
+## Making an avatar speak
+
+`talk.py` writes a glTF animation into an avatar that already carries viseme
+blendshapes (MetaPerson, or any rig with the standard 15-viseme set):
+
+```
+python talk.py avatar/model.glb "Good morning. How can I help you today?" --out out/talking.glb
+python verify_talk.py out/talking.glb out/talk_check.png
+```
+
+Text is converted to ARPAbet phonemes via the CMU dictionary, mapped to the
+15 visemes (`PP FF TH DD kk CH SS nn RR aa E ih oh ou sil`), given nominal
+durations, and blended with overlapping raised-cosine envelopes — visemes
+overlap rather than switch, because a mouth shape starts forming before its
+sound and relaxes after it. Without that overlap the result reads as a
+flipbook of poses rather than speech. Jaw opening and lip rounding are derived
+from the viseme mix; blinks run on a deliberately irregular cadence, and a
+small continuous head motion is layered over the neck chain.
+
+The animation is written by editing the glTF JSON and binary chunk directly,
+so the avatar's skin, joints, materials and morph targets survive untouched.
+
+**The viseme track is the seam.** Audio2Face emits weights over the same
+viseme names from audio; swap the generator in `lipsync.py` for its output and
+nothing downstream changes.
+
+`verify_talk.py` is the check that matters: it reads the morph targets back
+out of the written file, applies the animated weights, and renders the mouth.
+A file that writes without an exception is not evidence that anything moves.
+
 ## Known limits
 
 - The browser viewer builds its preview from parametric surfaces rather than
