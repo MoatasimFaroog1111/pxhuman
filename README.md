@@ -240,6 +240,47 @@ so the avatar's skin, joints, materials and morph targets survive untouched.
 viseme names from audio; swap the generator in `lipsync.py` for its output and
 nothing downstream changes.
 
+### Arabic
+
+`--lang` defaults to `auto` and detects Arabic script.
+
+Arabic writes short vowels only as optional diacritics, and most real text
+carries none. They are read when present and inferred when absent — a wrong
+short vowel moves the jaw slightly too far, while a missing one stops the
+mouth entirely, so the inference is worth making. Shadda lengthens, tanween
+becomes a vowel plus a final nuun (including when written over the alif, as
+in شكراً), and the definite article assimilates into a following sun letter.
+
+Emphatics (ص ض ط ظ) and pharyngeals (ح ع) share visemes with their plain
+counterparts: they differ in tongue root and pharynx, which the lips do not
+show.
+
+### Body animation
+
+`--body clip.glb` merges a skeletal clip — Mixamo clips need only converting
+from FBX to glTF first. MetaPerson's skeleton already uses Mixamo's bone
+names, so bones match directly and `mixamorig:` prefixes are stripped.
+
+Rotation is copied; translation is not, unless `--root-motion` asks for the
+hips. Two rigs that share bone names rarely share limb lengths or units, and
+copying translation between them is what tears a character apart.
+
+Where both the clip and the speech want the neck and head, the body pose is
+the base and the speech motion composes on top of it as a delta, rather than
+one silently overwriting the other.
+
+### Audio2Face
+
+`--a2f weights.csv` drives the mouth from audio instead of text. A2F emits
+ARKit blendshape weights and the avatar carries the full ARKit set, so the
+weights map by name with no viseme conversion in between.
+
+The integration is built around the weights rather than a transport: A2F runs
+as a cloud endpoint, a local NIM container, or the Maya and Unreal plugins,
+and all of them can produce a table of weights over time. `pxhuman/a2f.py`
+also contains a network client, which is **untested** — it needs credentials
+and a GPU endpoint. Prefer a weights file from the official sample client.
+
 `verify_talk.py` is the check that matters: it reads the morph targets back
 out of the written file, applies the animated weights, and renders the mouth.
 A file that writes without an exception is not evidence that anything moves.
